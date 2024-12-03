@@ -1,3 +1,55 @@
+# Obsidian Image Occlusion
+
+An Excalidraw script for creating Anki image occlusion cards in Obsidian, similar to Anki's Image Occlusion Enhanced add-on but integrated into your Obsidian workflow.
+
+## Overview
+This script allows you to create image occlusion flashcards directly in Obsidian using Excalidraw. It's designed to work seamlessly with your existing note-taking workflow while providing similar functionality to Anki's Image Occlusion Enhanced.
+
+## Comparison with Anki's Image Occlusion Enhanced
+
+### Advantages
+1. **Integrated Workflow**
+   - Create cards directly in Obsidian
+   - Use Excalidraw's drawing tools
+   - Keep source files with your notes
+   - Edit cards without leaving Obsidian
+
+2. **Enhanced Features**
+   - Supports shape grouping
+   - Maintains source file links
+   - Batch operations for card management
+   - Better file organization
+
+3. **Version Control**
+   - All files are plain text/images
+   - Easy to backup and sync
+   - Works with git and other VCS
+
+### Limitations
+1. **Editing Experience**
+   - No real-time preview of occlusions
+   - Must regenerate cards after edits
+   - Cannot edit existing cards directly
+
+2. **Card Types**
+   - Only supports "Hide One" and "Hide All" modes
+   - No support for "Hide All, Guess One by One"
+   - Cannot mix different occlusion types in one card
+
+3. **Performance**
+   - Generating multiple cards takes longer
+   - Manual sync with Anki required
+   - Larger file size due to image storage
+
+## Use Cases
+- Creating anatomy flashcards
+- Learning diagrams and charts
+- Memorizing maps and locations
+- Studying technical illustrations
+- Learning character components
+
+
+
 ## Usage Instructions
 
 ### Prerequisites
