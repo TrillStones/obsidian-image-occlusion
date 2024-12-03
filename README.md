@@ -9,7 +9,7 @@
 2. Copy template files to your templates folder:
    ```
    templates/
-   ├── Anki Image overlay.md      # For image occlusion cards
+   ├── Anki Card.md      # For image occlusion cards
    ```
 
 ### Creating Image Occlusion Cards
