@@ -66,7 +66,7 @@ This script allows you to create image occlusion flashcards directly in Obsidian
 
 ### Creating Image Occlusion Cards
 1. Open or create an Excalidraw file
-2. Insert an image you want to study
+2. Insert an image you want to study ( Scenes including directly inserting images into the canvas of excalidraw; inserting another excaldraw as an image; cropping a work of excaldraw and displaying a portion of the image before inserting it as an image into the excalidraw canvas.)
 3. Draw shapes over areas you want to occlude:
    - Use rectangles or ellipses
    - Group related shapes if needed
