@@ -83,7 +83,6 @@ This script allows you to create image occlusion flashcards directly in Obsidian
 
 ### Managing Existing Cards
 
-#### Option 1: Using Image Occlusion Script
 1. To mark cards for deletion:
    - Select source Excalidraw file
    - Run "Image Occlusion" script
@@ -101,36 +100,12 @@ This script allows you to create image occlusion flashcards directly in Obsidian
      - Generated images
      - Batch marker files
 
-#### Option 2: Using BatchDeleteAnkiCards Script
-1. For selective deletion from same source:
-   - Navigate to the image occlusion folder
-   - Select the `batch-marker.md` file
-   - Run `BatchDeleteAnkiCards.js` script by using macro function of QuickAdd Plugin
-   - This will:
-     - Find all cards linked to this batch
-     - Add DELETE marker to selected cards
-     - Preserve the source Excalidraw file
 
-2. Workflow example:
-   ```
-   Excalidraw-Image-Occlusions/
-   └── image-name-timestamp/
-       ├── batch-marker.md     # ← Select this file
-       ├── card1.card.md      # Will be marked for deletion
-       ├── card2.card.md      # Will be marked for deletion
-       └── ...
-   ```
-
-3. Benefits of using BatchDeleteAnkiCards:
-   - More precise control over deletion
-   - Can delete cards from multiple batches
-   - Safer than full batch deletion
-   - Maintains source file integrity
 
 ### File Organization
 ```
 Excalidraw-Image-Occlusions/
-└── image-name-timestamp/
+└── excalidraw-name-timestamp/
     ├── batch-marker.md     # Links to source file
     ├── q-timestamp.png     # Question images
     ├── a-timestamp.png     # Answer images
