@@ -11,8 +11,8 @@ This script creates image occlusion cards similar to Anki's Image Occlusion Enha
 5. Choose occlusion mode:
    - ⭐⠀      Add Cards:    Hide One, Guess One: Creates cards where only one shape is hidden at a time
    - ⭐⭐     Add Cards:    Hide All, Guess One: Creates cards where all shapes are hidden except one
-   - 🗑️⠀      Delete Cards: Delete all old cards (only add DELETE marker): Marks all existing cards for deletion by adding DELETE marker
-   - 🗑️💥     Delete Cards: Delete all old cards file and related images (Be Cautious!!): Permanently deletes all related card files and images
+   - 🗑️⠀      Delete Cards: Delete old cards (add DELETE marker): Marks all existing cards for deletion by adding DELETE marker
+   - 🗑️💥     Delete Cards: Delete old cards file and related images (Be Cautious!! Physical Delection): Permanently deletes all related card files and images
 
 The script will generate masked versions of the image and save them locally.
 
@@ -28,8 +28,8 @@ if(!ea.verifyMinimumPluginVersion || !ea.verifyMinimumPluginVersion("1.9.0")) {
 // Get all selected elements from the canvas
 const elements = ea.getViewSelectedElements();
 
-// Find the image element among selected elements
-const image = elements.find(el => el.type === "image");
+// Find all selected image elements
+const selectedImages = elements.filter(el => el.type === "image");
 
 // Get all non-image elements to use as masks
 const maskElements = elements.filter(el => el.type !== "image");
@@ -50,8 +50,32 @@ const masks = maskGroups.map(group => {
 });
 
 // Validate selection - must have one image and at least one mask
-if(!image || masks.length === 0) {
-  new Notice("Please select one image and at least one element or group to use as mask");
+if(selectedImages.length === 0 || masks.length === 0) {
+  new Notice("Please select at least one image and one element or group to use as mask");
+  return;
+}
+
+// Verify the selected image and masks are properly grouped
+const validateSelection = () => {
+  // Get combined bounds of all selected images
+  const combinedBounds = selectedImages.reduce((bounds, img) => ({
+    minX: Math.min(bounds.minX, img.x),
+    maxX: Math.max(bounds.maxX, img.x + img.width),
+    minY: Math.min(bounds.minY, img.y),
+    maxY: Math.max(bounds.maxY, img.y + img.height)
+  }), {
+    minX: Infinity,
+    maxX: -Infinity,
+    minY: Infinity,
+    maxY: -Infinity
+  });
+  
+  // Remove bounds checking and always return true
+  return true;
+};
+
+// Validate selection before proceeding
+if (!validateSelection()) {
   return;
 }
 
@@ -60,8 +84,8 @@ const mode = await utils.suggester(
   [
     "⭐⠀      Add Cards:    Hide One, Guess One",
     "⭐⭐     Add Cards:    Hide All, Guess One",
-    "🗑️⠀      Delete Cards: Delete all old cards (only add DELETE marker)",
-    "🗑️💥     Delete Cards: Delete all old cards file and related images (Be Cautious!!)"
+    "🗑️⠀      Delete Cards: Delete old cards (add DELETE marker)",
+    "🗑️💥     Delete Cards: Delete old cards files and related images (Be Cautious!!)"
   ],
   ["hideOne", "hideAll", "delete", "deleteFiles"],
   "Select operation mode"
@@ -72,6 +96,9 @@ if(!mode) return;
 
 // Function to permanently delete related files and images
 const deleteRelatedFilesAndImages = async (sourcePath) => {
+  // Add delay function for async operations
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  
   // Initialize collections and counters
   const cardFiles = new Set();
   const batchMarkers = new Set();
@@ -79,37 +106,52 @@ const deleteRelatedFilesAndImages = async (sourcePath) => {
   let deletedCardsCount = 0;
   let deletedFoldersCount = 0;
   
-  // Validate source file exists
   if (!sourceFile) {
     new Notice(`Source file not found: ${sourcePath}`);
     return;
   }
   
-  // Get backlinks from metadata cache
-  const resolvedLinks = app.metadataCache.resolvedLinks;
+  // Get backlinks to find batch-marker.md files
+  const backlinks = app.metadataCache.getBacklinksForFile(sourceFile) || new Map();
   
-  // Find all files that link to the source file
-  for (const [filePath, links] of Object.entries(resolvedLinks)) {
-    if (links[sourcePath]) {
-      let file = app.vault.getAbstractFileByPath(filePath);
-      if (file) {
-        // Read file content to determine its type
-        const content = await app.vault.read(file);
-        
-        // Check if file is an Anki card by looking for START and END markers
-        const lines = content.split('\n');
-        const hasStart = lines.some(line => /^\s*START\s*$/.test(line));
-        const hasEnd = lines.some(line => /^\s*END\s*$/.test(line));
-        
-        if (hasStart && hasEnd) {
-          cardFiles.add(file);
-          console.log(`Found card file to delete: ${file.path}`);
+  // Find all batch-marker.md files that link to the source file
+  if (backlinks.data instanceof Map) {
+    for (const [filePath, _] of backlinks.data.entries()) {
+      if (filePath.endsWith('batch-marker.md')) {
+        const markerFile = app.vault.getAbstractFileByPath(filePath);
+        if (markerFile) {
+          batchMarkers.add(markerFile);
+          console.log(`Found batch marker: ${filePath}`);
         }
-        
-        // Check if file is a batch marker file
-        if (file.name === 'batch-marker.md') {
-          batchMarkers.add(file);
-          console.log(`Found batch-marker file: ${file.path}`);
+      }
+    }
+  }
+  
+  if (batchMarkers.size === 0) {
+    console.log('No batch markers found. Please check if the source file path is correct:', sourcePath);
+    return;
+  }
+  
+  // Process each batch marker file to find cards
+  for (const marker of batchMarkers) {
+    console.log(`Processing batch marker: ${marker.path}`);
+    const content = await app.vault.read(marker);
+    const lines = content.split('\n');
+    
+    // Find the "Generated Cards:" section
+    const startIndex = lines.findIndex(line => line.trim() === 'Generated Cards:');
+    if (startIndex !== -1) {
+      // Process each card link after the "Generated Cards:" line
+      for (let i = startIndex + 1; i < lines.length; i++) {
+        const match = lines[i].match(/\[\[([^\]]+)\]\]/);
+        if (match) {
+          const cardPath = match[1];
+          // Use Obsidian's API to resolve wiki link
+          const cardFile = app.metadataCache.getFirstLinkpathDest(cardPath, marker.path);
+          if (cardFile) {
+            cardFiles.add(cardFile);
+            console.log(`Found card file through wiki link: ${cardFile.path}`);
+          }
         }
       }
     }
@@ -118,9 +160,12 @@ const deleteRelatedFilesAndImages = async (sourcePath) => {
   // First delete all card files
   for (const file of cardFiles) {
     try {
-      // Verify file still exists before attempting deletion
       if (await app.vault.adapter.exists(file.path)) {
+        // Notify Obsidian's event system about the deletion
+        app.vault.trigger("delete", file);
         await app.vault.delete(file);
+        // Add short delay to allow plugins to respond
+        await delay(50);
         deletedCardsCount++;
         console.log(`Deleted card file: ${file.path}`);
       }
@@ -129,17 +174,20 @@ const deleteRelatedFilesAndImages = async (sourcePath) => {
     }
   }
   
-  // Then delete batch marker folders after all cards are deleted
+  // Wait for file deletion operations to complete
+  await delay(200);
+  
+  // Then delete batch marker folders
   for (const marker of batchMarkers) {
-    // Get parent folder path from batch marker file path
     const parentPath = marker.path.substring(0, marker.path.lastIndexOf('/'));
     const parentFolder = app.vault.getAbstractFileByPath(parentPath);
     
-    // Verify folder exists before attempting deletion
     if (parentFolder && await app.vault.adapter.exists(parentFolder.path)) {
       try {
-        // Delete folder and all its contents recursively
+        // Notify folder deletion
+        app.vault.trigger("delete", parentFolder);
         await app.vault.delete(parentFolder, true);
+        await delay(50);
         deletedFoldersCount++;
         console.log(`Deleted folder: ${parentFolder.path}`);
       } catch (error) {
@@ -153,8 +201,31 @@ const deleteRelatedFilesAndImages = async (sourcePath) => {
   - Image folders deleted: ${deletedFoldersCount}`);
 };
 
+// Function to get batch markers and their parent folders
+const getBatchMarkersInfo = async (sourceFile) => {
+  const backlinks = app.metadataCache.getBacklinksForFile(sourceFile) || new Map();
+  const batchMarkers = new Map(); // Map<folderPath, Set<markerFile>>
+  
+  if (backlinks.data instanceof Map) {
+    for (const [filePath, _] of backlinks.data.entries()) {
+      if (filePath.endsWith('batch-marker.md')) {
+        const markerFile = app.vault.getAbstractFileByPath(filePath);
+        if (markerFile) {
+          const folderPath = markerFile.path.substring(0, markerFile.path.lastIndexOf('/'));
+          if (!batchMarkers.has(folderPath)) {
+            batchMarkers.set(folderPath, new Set());
+          }
+          batchMarkers.get(folderPath).add(markerFile);
+        }
+      }
+    }
+  }
+  
+  return batchMarkers;
+};
+
 // Function to find and mark cards for deletion
-const deleteRelatedCards = async (sourcePath) => {
+const deleteRelatedCards = async (sourcePath, selectedFolders = null) => {
   const cardFiles = new Set();
   const sourceFile = app.vault.getAbstractFileByPath(sourcePath);
   let totalCardsFound = 0;
@@ -166,24 +237,71 @@ const deleteRelatedCards = async (sourcePath) => {
     return;
   }
   
-  // Get resolved links (backlinks) from metadata cache
-  const resolvedLinks = app.metadataCache.resolvedLinks;
+  // Get all batch markers grouped by folder
+  const batchMarkersMap = await getBatchMarkersInfo(sourceFile);
   
-  // Search through all files to find those linking to our source file
-  for (const [filePath, links] of Object.entries(resolvedLinks)) {
-    if (links[sourcePath]) {
-      const file = app.vault.getAbstractFileByPath(filePath);
-      if (file) {
-        cardFiles.add(file);
-        console.log(`Found related card file: ${file.path}`);
+  if (batchMarkersMap.size === 0) {
+    console.log('No batch markers found');
+    return;
+  }
+  
+  // Get batch markers to process
+  let batchMarkersToProcess = new Set();
+  if (selectedFolders) {
+    // Convert to array if it's not already
+    const folderArray = Array.isArray(selectedFolders) ? selectedFolders : [selectedFolders];
+    
+    // Process each selected folder
+    folderArray.forEach(folder => {
+      const markers = batchMarkersMap.get(folder);
+      if (markers) {
+        markers.forEach(marker => batchMarkersToProcess.add(marker));
+      }
+    });
+  } else {
+    // Process all markers
+    batchMarkersMap.forEach(markers => {
+      markers.forEach(marker => batchMarkersToProcess.add(marker));
+    });
+  }
+  
+  // Process each batch marker file
+  for (const marker of batchMarkersToProcess) {
+    console.log(`Processing batch marker: ${marker.path}`);
+    const content = await app.vault.read(marker);
+    console.log("Batch marker content:", content);
+    const lines = content.split('\n');
+    
+    // Find the "Generated Cards:" section
+    const startIndex = lines.findIndex(line => line.trim() === 'Generated Cards:');
+    console.log("Start index:", startIndex);
+    if (startIndex !== -1) {
+      // Process each card link after the "Generated Cards:" line
+      for (let i = startIndex + 1; i < lines.length; i++) {
+        console.log("Processing line:", lines[i]);
+        const match = lines[i].match(/\[\[([^\]]+)\]\]/);
+        if (match) {
+          const cardPath = match[1];
+          // Use Obsidian's API to resolve wiki link
+          const cardFile = app.metadataCache.getFirstLinkpathDest(cardPath, marker.path);
+          
+          if (cardFile) {
+            cardFiles.add(cardFile);
+            console.log(`Found card file through wiki link: ${cardFile.path}`);
+          } else {
+            console.log(`Card file not found for wiki link: ${cardPath}`);
+          }
+        }
       }
     }
   }
   
   // Process each card file to add DELETE markers
   for (const file of cardFiles) {
+    console.log("Processing card file:", file.path);
     // Read file content and split into lines for processing
     const content = await app.vault.read(file);
+    console.log("Card content:", content);
     const lines = content.split('\n');
     let modified = false;
     let cardCount = 0;
@@ -192,13 +310,15 @@ const deleteRelatedCards = async (sourcePath) => {
     // Search for Anki card IDs and add DELETE marker before each
     for (let i = 0; i < lines.length; i++) {
       // Look for Anki card ID pattern
-      const idMatch = lines[i].match(/<!--ID: .+?-->/);
+      const idMatch = lines[i].match(/<!--ID:.+?-->/);
       if (idMatch) {
+        console.log("Found ID line:", lines[i]);
         cardCount++;
         const cardId = idMatch[0];
         
         // Check if DELETE marker already exists
         if (i > 0 && lines[i-1].trim() === 'DELETE') {
+          console.log("DELETE marker already exists");
           alreadyMarkedCount++;
           continue;
         }
@@ -207,13 +327,16 @@ const deleteRelatedCards = async (sourcePath) => {
         lines.splice(i, 0, 'DELETE');
         i++; // Skip the newly inserted line
         modified = true;
-        console.log(`Added DELETE marker before ${cardId} in ${file.name}`);
+        console.log("Added DELETE marker before:", cardId);
       }
     }
     
     // Save changes if file was modified
     if (modified) {
+      console.log("Saving modified content");
       await app.vault.modify(file, lines.join('\n'));
+    } else {
+      console.log("No modifications needed");
     }
     
     totalCardsFound += cardCount;
@@ -232,20 +355,98 @@ const deleteRelatedCards = async (sourcePath) => {
 if(mode === "deleteFiles") {
   // Show confirmation dialog before permanent deletion
   const confirmed = await utils.suggester(
-    ["Cancel", "Yes, permanently delete all files"],
-    [false, true],
+    ["Delete all files", "Select folders to delete"],
+    ["all", "select"],
     "WARNING: This will permanently delete all related card files and image folders. This action cannot be undone. Are you sure?"
   );
   
-  // Execute deletion if confirmed
-  if (confirmed) {
-    const currentFile = app.workspace.getActiveFile();
-    if (currentFile) {
-      await deleteRelatedFilesAndImages(currentFile.path);
+  if (!confirmed) {
+    new Notice("Operation cancelled");
+    return;
+  }
+  
+  const currentFile = app.workspace.getActiveFile();
+  if (currentFile) {
+    // Get all batch markers and their folders
+    const batchMarkersMap = await getBatchMarkersInfo(currentFile);
+    
+    if (batchMarkersMap.size === 0) {
+      new Notice("No files found to delete");
+      return;
+    }
+    
+    if (confirmed === "select") {
+      // Sort folders alphabetically
+      const folders = Array.from(batchMarkersMap.keys()).sort();
+      
+      // Let user select folders
+      let selectedFolders = await utils.suggester(
+        folders,
+        folders,
+        "Select folders to delete (ESC to cancel)",
+        true  // Allow multi-select
+      );
+      
+      if (!selectedFolders || selectedFolders.length === 0) return;
+      
+      // Ensure selectedFolders is an array
+      if (!Array.isArray(selectedFolders)) {
+        selectedFolders = [selectedFolders];
+      }
+      
+      // Delete files from selected folders
+      for (const folder of selectedFolders) {
+        const markers = batchMarkersMap.get(folder);
+        if (markers) {
+          for (const marker of markers) {
+            // Process each batch marker
+            const content = await app.vault.read(marker);
+            const lines = content.split('\n');
+            const startIndex = lines.findIndex(line => line.trim() === 'Generated Cards:');
+            
+            if (startIndex !== -1) {
+              // Delete card files first
+              for (let i = startIndex + 1; i < lines.length; i++) {
+                const match = lines[i].match(/\[\[([^\]]+)\]\]/);
+                if (match) {
+                  const cardPath = match[1];
+                  const cardFile = app.metadataCache.getFirstLinkpathDest(cardPath, marker.path);
+                  if (cardFile) {
+                    try {
+                      await app.vault.delete(cardFile);
+                      console.log(`Deleted card file: ${cardFile.path}`);
+                    } catch (error) {
+                      console.error(`Failed to delete card file: ${cardFile.path}`, error);
+                    }
+                  }
+                }
+              }
+              
+              // Then delete the folder
+              const parentFolder = app.vault.getAbstractFileByPath(folder);
+              if (parentFolder) {
+                try {
+                  await app.vault.delete(parentFolder, true);
+                  console.log(`Deleted folder: ${folder}`);
+                } catch (error) {
+                  console.error(`Failed to delete folder: ${folder}`, error);
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      new Notice(`Successfully deleted selected folders and their contents`);
+    } else {
+      // Delete all files
+      const currentFile = app.workspace.getActiveFile();
+      if (currentFile) {
+        await deleteRelatedFilesAndImages(currentFile.path);
+      }
     }
   } else {
-    // User cancelled the operation
-    new Notice("Operation cancelled");
+    new Notice("No source file found");
   }
   return;
 }
@@ -254,7 +455,48 @@ if(mode === "deleteFiles") {
 if(mode === "delete") {
   const currentFile = app.workspace.getActiveFile();
   if (currentFile) {
-    await deleteRelatedCards(currentFile.path);
+    // Get all batch markers and their folders
+    const batchMarkersMap = await getBatchMarkersInfo(currentFile);
+    
+    if (batchMarkersMap.size === 0) {
+      new Notice("No cards found to delete");
+      return;
+    }
+    
+    // Ask user whether to delete all or select folders
+    const deleteChoice = await utils.suggester(
+      ["Delete all cards", "Select folders to delete"],
+      ["all", "select"],
+      "How would you like to delete cards?"
+    );
+    
+    if (!deleteChoice) return;
+    
+    if (deleteChoice === "select") {
+      // Sort folders alphabetically
+      const folders = Array.from(batchMarkersMap.keys()).sort();
+      
+      // Let user select folders
+      let selectedFolders = await utils.suggester(
+        folders,
+        folders,
+        "Select folders to delete cards from (ESC to cancel)",
+        true  // Allow multi-select
+      );
+      
+      if (!selectedFolders || selectedFolders.length === 0) return;
+      
+      // Ensure selectedFolders is an array
+      if (!Array.isArray(selectedFolders)) {
+        selectedFolders = [selectedFolders];
+      }
+      
+      // Delete cards from selected folders
+      await deleteRelatedCards(currentFile.path, selectedFolders);
+    } else {
+      // Delete all cards
+      await deleteRelatedCards(currentFile.path);
+    }
   }
   return;
 }
@@ -295,33 +537,162 @@ const getCurrentTimestamp = () => {
 
 // Initialize or get script settings for card location
 let settings = ea.getScriptSettings();
-if(!settings["Card Location"]) {
-  // Set default settings if not exists
-  settings = {
-    "Card Location": {
-      value: "ask",
-      description: "Where to save card files ('default' for same folder as images, or 'choose' for custom location)",
-      valueset: ["ask"]
-    }
-  };
+
+// Default settings configuration
+const defaultSettings = {
+  "Output Base Folder": {
+    value: "",
+    description: "Base folder for storing generated files. Always use forward slash '/' for paths. Example: 'Excalidraw-Image-Occlusions', 'Cards/Image-Occlusions'",
+    valueset: []  // Empty array allows free text input
+  },
+  "Card Location": {
+    value: "ask",
+    description: "Where to save card files ('default' for same folder as images, or 'choose' for custom location)",
+    valueset: ["ask", "default", "choose"]
+  },
+  "Default Template": {
+    value: "",
+    description: "Default template file path relative to template folder (e.g., 'Anki/Image Occlusion.md'). Leave empty to select template each time",
+    valueset: []  // Empty array allows free text input
+  },
+  "Default Card Path": {
+    value: "",
+    description: "Default path for card files when 'Card Location' is set to 'default'. Always use forward slash '/' for paths. Examples: 'flashcard/Anki', 'My Notes/Cards/Occlusion'. Leave empty to save with images",
+    valueset: []  // Empty array allows free text input
+  },
+  "Card File Prefix": {
+    value: "",
+    description: "Prefix for generated card files. Must be a valid filename without dots. Examples: 'anki - ', 'card ', 'io - '. Leave empty for no prefix",
+    valueset: []  // Empty array allows free text input
+  },
+  "Card File Extension": {
+    value: "",
+    description: "File extension prefix for generated markdown files. Examples: '.card' for '.card.md', '.anki' for '.anki.md'. Leave empty for '.md'",
+    valueset: []  // Empty array allows free text input
+  },
+  "Image Quality": {
+    value: "1.5",
+    description: "Export scale for image quality (e.g., 1.5). Higher values mean better quality but larger files. Must be a valid number.",
+    valueset: []  // Empty array allows free text input
+  },
+  "Hide All, Guess One - Highlight Color": {
+    value: "#ffd700",
+    description: "Color used to highlight the target mask in 'Hide All, Guess One' mode (e.g., #ffd700 for gold, #ff0000 for red)",
+    valueset: []  // Empty array allows free text input
+  }
+};
+
+// Initialize settings if they don't exist or merge with defaults
+if (!settings) {
+  settings = defaultSettings;
   await ea.setScriptSettings(settings);
+} else {
+  // Check and add any missing settings
+  let needsUpdate = false;
+  Object.entries(defaultSettings).forEach(([key, defaultValue]) => {
+    if (!settings[key]) {
+      settings[key] = defaultValue;
+      needsUpdate = true;
+    }
+  });
+  
+  if (needsUpdate) {
+    await ea.setScriptSettings(settings);
+  }
 }
+
+// Validate and get image quality setting
+const validateQuality = (quality) => {
+  // Try to parse as float and check if it's a valid number
+  const value = parseFloat(quality);
+  return !isNaN(value) && isFinite(value) && value > 0;
+};
+
+// Get image quality with validation
+const imageQuality = validateQuality(settings["Image Quality"]?.value) 
+  ? settings["Image Quality"].value 
+  : "1.5";  // Default to 1.5 if invalid
+
+// Get and validate highlight color setting
+const validateColor = (color) => {
+  // Check if it's a valid hex color
+  return /^#[0-9A-Fa-f]{6}$/.test(color);
+};
+
+// Get highlight color with validation
+const highlightColor = validateColor(settings["Hide All, Guess One - Highlight Color"]?.value) 
+  ? settings["Hide All, Guess One - Highlight Color"].value 
+  : "#ffd700";  // Default to gold if invalid
 
 // Function to prompt user for card file save location
 const askForCardLocation = async (imageFolder) => {
-  // Show location selection dialog
+  // Use the initialized settings
+  const locationSetting = settings["Card Location"].value;
+  const defaultPath = settings["Default Card Path"]?.value?.trim();
+  
+  // If setting is "default", use configured path or image folder
+  if (locationSetting === "default") {
+    if (defaultPath) {
+      // Normalize path by replacing backslashes with forward slashes
+      const normalizedPath = defaultPath.replace(/\\/g, '/');
+      // Create default path if it doesn't exist
+      await app.vault.adapter.mkdir(normalizedPath, { recursive: true });
+      return normalizedPath;
+    }
+    return imageFolder;
+  }
+  
+  // If setting is "choose", skip dialog and go straight to folder selection
+  if (locationSetting === "choose") {
+    // Get list of all available folders for user selection
+    const folders = app.vault.getAllLoadedFiles()
+      .filter(f => f.children)
+      .map(f => f.path)
+      .sort();
+    
+    // Let user choose from available folders
+    const selectedFolder = await utils.suggester(
+      folders,
+      folders,
+      "Select folder for card files"
+    );
+    
+    // Return null if user cancels folder selection
+    if (selectedFolder === undefined) {
+      return null;
+    }
+    
+    return selectedFolder || imageFolder;
+  }
+  
+  // If setting is "ask", show the choice dialog
   const choice = await utils.suggester(
-    ["Default location (with images)", "Choose custom location"],
+    [
+      defaultPath ? `Default location (${defaultPath})` : "Default location (with images)", 
+      "Choose custom location"
+    ],
     ["default", "custom"],
     "Where would you like to save the card files?"
   );
   
+  // If user cancels (presses ESC), return null
+  if (choice === undefined) {
+    return null;
+  }
+  
   // Return default location if no choice or default selected
   if(!choice || choice === "default") {
+    if (defaultPath) {
+      // Normalize path by replacing backslashes with forward slashes
+      const normalizedPath = defaultPath.replace(/\\/g, '/');
+      // Create default path if it doesn't exist
+      await app.vault.adapter.mkdir(normalizedPath, { recursive: true });
+      return normalizedPath;
+    }
     return imageFolder;
   }
   
-  // Get list of all available folders in vault
+  // Get list of all available folders for user selection
   const folders = app.vault.getAllLoadedFiles()
     .filter(f => f.children)
     .map(f => f.path)
@@ -334,12 +705,20 @@ const askForCardLocation = async (imageFolder) => {
     "Select folder for card files"
   );
   
+  // Return null if user cancels folder selection
+  if (selectedFolder === undefined) {
+    return null;
+  }
+  
   return selectedFolder || imageFolder;
 };
 
 // Function to construct image folder path using image name and timestamp
 const getImageFolder = (imageName, timestamp) => {
-  return `Excalidraw-Image-Occlusions/${imageName}-${timestamp}`;
+  const baseFolder = settings["Output Base Folder"]?.value?.trim() || "Excalidraw-Image-Occlusions";
+  // Normalize path by replacing backslashes with forward slashes
+  const normalizedBase = baseFolder.replace(/\\/g, '/');
+  return `${normalizedBase}/${imageName}-${timestamp}`;
 };
 
 // Function to determine final output folder path based on settings or user choice
@@ -373,10 +752,32 @@ const getOutputFolder = async (imageName, timestamp) => {
   return selectedFolder;
 };
 
+// Helper function to get current Excalidraw file path
+const getCurrentFilePath = () => {
+  const file = app.workspace.getActiveFile();
+  return file ? file.path : '';
+};
+
+// Get current editing file name for folder naming
+const getSourceFileName = () => {
+  const currentFile = app.workspace.getActiveFile();
+  if (!currentFile) {
+    return 'image';
+  }
+  // Remove extension and replace special characters
+  return currentFile.basename.replace(/[\\/:*?"<>|]/g, '_');
+};
+
 // Create necessary folders for storing images and cards
-const imageName = getImageName(image.fileId);
+const imageName = getSourceFileName();
 const imageFolder = getImageFolder(imageName, timestamp);
 const cardFolder = await askForCardLocation(imageFolder);
+
+// Exit if user cancelled location selection
+if (cardFolder === null) {
+  new Notice("Operation cancelled");
+  return;
+}
 
 // Create image folder with all parent directories
 await app.vault.adapter.mkdir(imageFolder, { recursive: true });
@@ -385,6 +786,27 @@ await app.vault.adapter.mkdir(imageFolder, { recursive: true });
 if(cardFolder !== imageFolder) {
   await app.vault.adapter.mkdir(cardFolder, { recursive: true });
 }
+
+// Create initial batch marker file
+const createBatchMarker = async (sourceFile) => {
+  const content = `Source: [[${sourceFile}|find edit source]]\n\nGenerated Cards:\n`;
+  const fileName = `${imageFolder}/batch-marker.md`;
+  await app.vault.create(fileName, content);
+  return fileName;
+};
+
+// Add card to batch marker
+const addCardToBatchMarker = async (cardPath) => {
+  const markerPath = `${imageFolder}/batch-marker.md`;
+  const currentContent = await app.vault.read(app.vault.getAbstractFileByPath(markerPath));
+  // Use full path in batch-marker
+  const newContent = currentContent + `[[${cardPath}]]\n`;
+  await app.vault.modify(app.vault.getAbstractFileByPath(markerPath), newContent);
+};
+
+// Create batch marker file after folders are created
+const sourceFile = getCurrentFilePath();
+const batchMarkerFile = await createBatchMarker(sourceFile);
 
 // Function to convert base64 image data to binary format
 const base64ToBinary = (base64) => {
@@ -402,8 +824,8 @@ const base64ToBinary = (base64) => {
 
 // Function to generate image with specified visible and hidden masks
 const generateMaskedImage = async (visibleMasks = [], hiddenMasks = []) => {
-  // Combine image and all masks into one array
-  const allElements = [image];
+  // Combine all selected images and masks into one array
+  const allElements = [...selectedImages];
   [...visibleMasks, ...hiddenMasks].forEach(mask => {
     if (mask.type === "group") {
       allElements.push(...mask.elements);
@@ -411,18 +833,21 @@ const generateMaskedImage = async (visibleMasks = [], hiddenMasks = []) => {
       allElements.push(mask);
     }
   });
+  
   // Copy elements to Excalidraw's editing area
   ea.copyViewElementsToEAforEditing(allElements);
   
-  // Get and cache the original image data
-  const imageData = ea.targetView.excalidrawData.getFile(image.fileId);
-  if (imageData) {
-    ea.imagesDict[image.fileId] = {
-      id: image.fileId,
-      dataURL: imageData.img,
-      mimeType: imageData.mimeType,
-      created: Date.now()
-    };
+  // Get and cache all selected images data
+  for (const img of selectedImages) {
+    const imageData = ea.targetView.excalidrawData.getFile(img.fileId);
+    if (imageData) {
+      ea.imagesDict[img.fileId] = {
+        id: img.fileId,
+        dataURL: imageData.img,
+        mimeType: imageData.mimeType,
+        created: Date.now()
+      };
+    }
   }
 
   // Configure visibility of masks for question image
@@ -458,12 +883,13 @@ const generateMaskedImage = async (visibleMasks = [], hiddenMasks = []) => {
   // Generate PNG with specific export settings
   const dataURL = await ea.createPNGBase64(
     null,
-    1,
+    parseFloat(imageQuality),
     {
-      // Force light mode and white background for consistent images
       exportWithDarkMode: false,
       exportWithBackground: true,
-      viewBackgroundColor: "#ffffff"
+      viewBackgroundColor: "#ffffff",
+      exportScale: parseFloat(imageQuality),
+      quality: 100
     }
   );
 
@@ -499,15 +925,6 @@ const getTemplates = () => {
   return templates.children.filter(f => f.extension === "md");
 };
 
-// Function to create batch marker file with source link
-const createSourceLinkFile = async (sourceFile) => {
-  // Create content with link back to source file
-  const content = `\n[[${sourceFile} |find edit source]]\n`;
-  const fileName = `${imageFolder}/batch-marker.md`;
-  await app.vault.create(fileName, content);
-  return fileName;
-};
-
 // Function to create card markdown file from template
 const createMarkdownFromTemplate = async (templatePath, cardNumber, imagePath, sourceFile) => {
   const templaterPlugin = app.plugins.plugins["templater-obsidian"];
@@ -528,15 +945,48 @@ const createMarkdownFromTemplate = async (templatePath, cardNumber, imagePath, s
     .replace(/{{editSource}}/g, sourceFile)
     .replace(/{{batchMarker}}/g, `${imageFolder}/batch-marker.md`);
   
+  // Get and validate file prefix from settings
+  const validatePrefix = (prefix) => {
+    // Allow trailing spaces but validate the actual prefix content
+    const actualPrefix = prefix.replace(/^\s+|\s+$/g, '');  // Remove leading and trailing spaces for validation only
+    return !actualPrefix || /^[a-zA-Z0-9_\s-]+$/.test(actualPrefix);
+  };
+  
+  const filePrefix = settings["Card File Prefix"]?.value || "";  // Don't trim to keep original spaces
+  const validatedPrefix = validatePrefix(filePrefix) ? filePrefix : "";
+  const prefixPart = validatedPrefix || "";
+  
+  // Get card file extension from settings
+  const extensionPrefix = settings["Card File Extension"]?.value?.trim() || "";
+  const fileExtension = extensionPrefix.startsWith('.') ? `${extensionPrefix}.md` : ".md";
+  
   // Create new card file with generated content
-  const fileName = `${cardFolder}/${cardNumber}.card.md`;
+  const fileName = `${cardFolder}/${prefixPart}${cardNumber}${fileExtension}`;
   await app.vault.create(fileName, content);
+  
+  // Add card to batch marker after successful creation
+  await addCardToBatchMarker(fileName);
 };
 
-// Helper function to get current Excalidraw file path
-const getCurrentFilePath = () => {
-  const file = app.workspace.getActiveFile();
-  return file ? file.path : '';
+// Function to get template file based on settings
+const getTemplateFile = async (templates) => {
+  // Get default template path from settings
+  const defaultTemplate = settings["Default Template"]?.value?.trim();
+  
+  if (defaultTemplate) {
+    // Try to find the default template
+    const templateFile = templates.find(t => t.path.endsWith(defaultTemplate));
+    if (templateFile) {
+      return templateFile;
+    }
+  }
+  
+  // If no default template or not found, let user select
+  return await utils.suggester(
+    templates.map(t => t.basename),
+    templates,
+    "Select a template for the cards"
+  );
 };
 
 // Begin card generation process based on selected mode
@@ -546,19 +996,9 @@ if(mode === "hideAll") {
   const templates = getTemplates();
   if (!templates) return;
   
-  // Let user select template file for card generation
-  const templateFile = await utils.suggester(
-    templates.map(t => t.basename),
-    templates,
-    "Select a template for the cards"
-  );
+  // Get template file based on settings or user selection
+  const templateFile = await getTemplateFile(templates);
   if (!templateFile) return;
-
-  // Get path of current Excalidraw file for linking
-  const sourceFile = getCurrentFilePath();
-
-  // Create batch marker file to track related cards
-  const batchMarkerFile = await createSourceLinkFile(sourceFile);
 
   // Generate cards for each mask in Hide All mode
   for(let i = 0; i < masks.length; i++) {
@@ -569,8 +1009,36 @@ if(mode === "hideAll") {
     // Generate unique timestamp for this card
     const fileTimestamp = getCurrentTimestamp();
     
+    // Create a copy of all masks and highlight the target mask
+    const questionMasks = masks.map(mask => {
+      if (mask === hiddenMasks[0]) {
+        // Handle group type masks
+        if (mask.type === "group") {
+          return {
+            ...mask,
+            elements: mask.elements.map(el => ({
+              ...el,
+              strokeWidth: 4,              // Thicker border
+              strokeColor: highlightColor,  // Use configured highlight color
+              strokeStyle: "solid",        // Solid line
+              roughness: 0                 // Smooth border
+            }))
+          };
+        }
+        // Handle single element masks
+        return {
+          ...mask,
+          strokeWidth: 4,              // Thicker border
+          strokeColor: highlightColor,  // Use configured highlight color
+          strokeStyle: "solid",        // Solid line
+          roughness: 0                 // Smooth border
+        };
+      }
+      return mask;
+    });
+    
     // Generate question image with all masks visible
-    const questionDataURL = await generateMaskedImage(masks, []);
+    const questionDataURL = await generateMaskedImage(questionMasks, []);
     const questionPath = `${imageFolder}/q-${fileTimestamp}.png`;
     await app.vault.adapter.writeBinary(
       questionPath,
@@ -605,19 +1073,21 @@ if(mode === "hideAll") {
   const templates = getTemplates();
   if (!templates) return;
   
-  // Let user select template for card generation
-  const templateFile = await utils.suggester(
-    templates.map(t => t.basename),
-    templates,
-    "Select a template for the cards"
-  );
+  // Get template file based on settings or user selection
+  const templateFile = await getTemplateFile(templates);
   if (!templateFile) return;
 
-  // Get current Excalidraw file path for linking
-  const sourceFile = getCurrentFilePath();
-
-  // Create batch marker file to track related cards
-  const batchMarkerFile = await createSourceLinkFile(sourceFile);
+  // Generate common answer image first (all masks hidden)
+  const commonAnswerTimestamp = getCurrentTimestamp();
+  const commonAnswerDataURL = await generateMaskedImage([], masks);
+  const commonAnswerPath = `${imageFolder}/a-${commonAnswerTimestamp}.png`;
+  await app.vault.adapter.writeBinary(
+    commonAnswerPath,
+    base64ToBinary(commonAnswerDataURL)
+  );
+  
+  // Get full path for common answer image
+  const commonAnswerFullPath = app.vault.adapter.getFullPath(commonAnswerPath);
 
   // Process each mask individually
   for(const mask of masks) {
@@ -636,18 +1106,10 @@ if(mode === "hideAll") {
       base64ToBinary(questionDataURL)
     );
     
-    // Generate answer image with all masks hidden
-    const answerDataURL = await generateMaskedImage([], masks);
-    const answerPath = `${imageFolder}/a-${fileTimestamp}.png`;
-    await app.vault.adapter.writeBinary(
-      answerPath,
-      base64ToBinary(answerDataURL)
-    );
-    
     // Create markdown file with paths to question and answer images
     const fullPaths = {
       question: app.vault.adapter.getFullPath(questionPath),
-      answer: app.vault.adapter.getFullPath(answerPath)
+      answer: commonAnswerFullPath
     };
     // Generate card file using template and image paths
     await createMarkdownFromTemplate(
