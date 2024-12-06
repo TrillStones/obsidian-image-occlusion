@@ -550,14 +550,14 @@ const defaultSettings = {
     description: "Where to save card files ('default' for same folder as images, or 'choose' for custom location)",
     valueset: ["ask", "default", "choose"]
   },
-  "Default Template": {
-    value: "",
-    description: "Default template file path relative to template folder (e.g., 'Anki/Image Occlusion.md'). Leave empty to select template each time",
-    valueset: []  // Empty array allows free text input
-  },
   "Default Card Path": {
     value: "",
     description: "Default path for card files when 'Card Location' is set to 'default'. Always use forward slash '/' for paths. Examples: 'flashcard/Anki', 'My Notes/Cards/Occlusion'. Leave empty to save with images",
+    valueset: []  // Empty array allows free text input
+  },
+  "Default Template": {
+    value: "",
+    description: "Default template file path relative to template folder (e.g., 'Anki/Image Occlusion.md'). Leave empty to select template each time",
     valueset: []  // Empty array allows free text input
   },
   "Card File Prefix": {
@@ -565,9 +565,9 @@ const defaultSettings = {
     description: "Prefix for generated card files. Must be a valid filename without dots. Examples: 'anki - ', 'card ', 'io - '. Leave empty for no prefix",
     valueset: []  // Empty array allows free text input
   },
-  "Card File Extension": {
+  "Card File Suffix": {
     value: "",
-    description: "File extension prefix for generated markdown files. Examples: '.card' for '.card.md', '.anki' for '.anki.md'. Leave empty for '.md'",
+    description: "Suffix for generated card files (before .md). Examples: ' -card.card3' will generate 'prefix-timestamp-card.card3.md'. Leave empty for no suffix",
     valueset: []  // Empty array allows free text input
   },
   "Image Quality": {
@@ -633,8 +633,11 @@ const askForCardLocation = async (imageFolder) => {
   // If setting is "default", use configured path or image folder
   if (locationSetting === "default") {
     if (defaultPath) {
-      // Normalize path by replacing backslashes with forward slashes
-      const normalizedPath = defaultPath.replace(/\\/g, '/');
+      // Normalize path: replace backslashes and remove trailing slash
+      const normalizedPath = defaultPath
+        .replace(/\\/g, '/')
+        .replace(/\/+$/, '');  // Remove trailing slashes
+      
       // Create default path if it doesn't exist
       await app.vault.adapter.mkdir(normalizedPath, { recursive: true });
       return normalizedPath;
@@ -683,8 +686,11 @@ const askForCardLocation = async (imageFolder) => {
   // Return default location if no choice or default selected
   if(!choice || choice === "default") {
     if (defaultPath) {
-      // Normalize path by replacing backslashes with forward slashes
-      const normalizedPath = defaultPath.replace(/\\/g, '/');
+      // Normalize path: replace backslashes and remove trailing slash
+      const normalizedPath = defaultPath
+        .replace(/\\/g, '/')
+        .replace(/\/+$/, '');  // Remove trailing slashes
+      
       // Create default path if it doesn't exist
       await app.vault.adapter.mkdir(normalizedPath, { recursive: true });
       return normalizedPath;
@@ -716,8 +722,10 @@ const askForCardLocation = async (imageFolder) => {
 // Function to construct image folder path using image name and timestamp
 const getImageFolder = (imageName, timestamp) => {
   const baseFolder = settings["Output Base Folder"]?.value?.trim() || "Excalidraw-Image-Occlusions";
-  // Normalize path by replacing backslashes with forward slashes
-  const normalizedBase = baseFolder.replace(/\\/g, '/');
+  // Normalize path and remove trailing slash
+  const normalizedBase = baseFolder
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '');
   return `${normalizedBase}/${imageName}-${timestamp}`;
 };
 
@@ -952,16 +960,24 @@ const createMarkdownFromTemplate = async (templatePath, cardNumber, imagePath, s
     return !actualPrefix || /^[a-zA-Z0-9_\s-]+$/.test(actualPrefix);
   };
   
+  // Get and validate file suffix from settings
+  const validateSuffix = (suffix) => {
+    // Allow trailing spaces but validate the actual suffix content
+    const actualSuffix = suffix.replace(/^\s+|\s+$/g, '');  // Remove leading and trailing spaces for validation only
+    return !actualSuffix || /^[a-zA-Z0-9_\s\-.]+$/.test(actualSuffix);  // Allow dots in suffix
+  };
+  
   const filePrefix = settings["Card File Prefix"]?.value || "";  // Don't trim to keep original spaces
   const validatedPrefix = validatePrefix(filePrefix) ? filePrefix : "";
   const prefixPart = validatedPrefix || "";
   
-  // Get card file extension from settings
-  const extensionPrefix = settings["Card File Extension"]?.value?.trim() || "";
-  const fileExtension = extensionPrefix.startsWith('.') ? `${extensionPrefix}.md` : ".md";
+  // Get and validate file suffix from settings
+  const fileSuffix = settings["Card File Suffix"]?.value || "";  // Don't trim to keep original spaces
+  const validatedSuffix = validateSuffix(fileSuffix) ? fileSuffix : "";
+  const suffixPart = validatedSuffix || "";
   
   // Create new card file with generated content
-  const fileName = `${cardFolder}/${prefixPart}${cardNumber}${fileExtension}`;
+  const fileName = `${cardFolder}/${prefixPart}${cardNumber}${suffixPart}.md`;
   await app.vault.create(fileName, content);
   
   // Add card to batch marker after successful creation
