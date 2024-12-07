@@ -49,6 +49,8 @@ This script allows you to create image occlusion flashcards directly in Obsidian
 - Learning character components
 
 
+[Watch the Demo](https://www.youtube.com/watch?v=zZClArYX-G0)
+
 
 ## Usage Instructions
 
